@@ -49,40 +49,204 @@ Stagehand ──HTTP──> 你的 Qwen OpenAI-compatible 服务 ──> Ascend 
 
 这不是 Stagehand 自己提供的能力。Stagehand 只会调用一个模型 API；模型怎么在 Ascend 上跑，要由 vLLM/SGLang/MindIE/厂商推理栈或你自己的服务解决。
 
-## 2. 环境准备
+## 2. 第一阶段从零开始：源码、环境、文件放哪里
 
-根目录安装：
+这一阶段你要做的事只有一个：**在本地跑 Stagehand，用 DeepSeek V4 Pro 做普通 DOM 型 `act/observe/extract`，不要开 screenshot。**
+
+### 2.1 先 pull/clone 源码
+
+如果你还没有源码：
+
+```bash
+git clone https://github.com/browserbase/stagehand.git
+cd stagehand
+```
+
+如果你已经有源码：
 
 ```bash
 cd /workspace/stagehand
+git pull
+```
+
+如果你是在当前这个容器里继续操作，仓库路径就是：
+
+```bash
+cd /workspace/stagehand
+```
+
+### 2.2 准备 Node 和 pnpm
+
+根目录 `package.json` 要求 Node 20.19+ 或 22.12+。先确认版本：
+
+```bash
+node -v
+pnpm -v
+```
+
+安装依赖并构建：
+
+```bash
 pnpm install
 pnpm run build
 ```
 
-准备环境变量：
+> 如果 `pnpm run build` 失败，先不要继续接模型。先把依赖、Node 版本、Playwright/Chrome 这些基础问题解决。
 
-```bash
-cp .env.example .env
-```
+### 2.3 设置 DeepSeek API Key
 
-第一阶段至少需要：
+推荐先直接用环境变量，不要把 key 写进代码：
 
 ```bash
 export DEEPSEEK_API_KEY="你的 DeepSeek API key"
 ```
 
-如果你要用 Browserbase 云浏览器，才需要额外配置 Browserbase key。第一阶段不建议加这个复杂度。
+如果你想长期保存，可以复制 `.env.example`：
+
+```bash
+cp .env.example .env
+```
+
+然后在 `.env` 里加：
+
+```bash
+DEEPSEEK_API_KEY=你的 DeepSeek API key
+```
+
+但注意：下面的示例脚本如果直接用 `process.env.DEEPSEEK_API_KEY`，你需要确保运行前环境变量真的加载了。最简单的办法还是先用 `export`。
+
+### 2.4 你要写什么文件？
+
+第一阶段不要改 Stagehand 核心源码。你只需要新增一个示例脚本。
+
+建议文件位置：
+
+```text
+packages/core/examples/deepseek-local.ts
+```
+
+为什么放这里？因为 `packages/core/package.json` 已经有 example runner，可以直接跑 `packages/core/examples/*.ts`。根目录的 `pnpm run example -- <name>` 也会转到 core package 的 examples。
+
+创建文件：
+
+```bash
+cat > packages/core/examples/deepseek-local.ts <<'EOF'
+import { CustomOpenAIClient, Stagehand } from "../lib/v3/index.js";
+import OpenAI from "openai";
+import { z } from "zod";
+
+async function main() {
+  if (!process.env.DEEPSEEK_API_KEY) {
+    throw new Error("Missing DEEPSEEK_API_KEY");
+  }
+
+  const stagehand = new Stagehand({
+    env: "LOCAL",
+    verbose: 1,
+    // 第一阶段不用 screenshot，所以用 OpenAI-compatible client 最直接。
+    llmClient: new CustomOpenAIClient({
+      modelName: "deepseek-v4-pro",
+      client: new OpenAI({
+        apiKey: process.env.DEEPSEEK_API_KEY,
+        baseURL: "https://api.deepseek.com",
+      }),
+    }),
+  });
+
+  await stagehand.init();
+
+  try {
+    const page = stagehand.context.pages()[0];
+    await page.goto("https://example.com");
+
+    const observed = await stagehand.observe("找到页面里的 More information 链接");
+    console.log("observe result:", JSON.stringify(observed, null, 2));
+
+    await stagehand.act("点击 More information 链接");
+
+    const data = await stagehand.extract(
+      "提取页面标题和一句话说明，不要使用截图",
+      z.object({
+        title: z.string(),
+        summary: z.string(),
+      }),
+    );
+
+    console.log("extract result:", JSON.stringify(data, null, 2));
+  } finally {
+    await stagehand.close();
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+```
+
+这个文件就是你的第一阶段入口。它没有嵌入业务系统，也没有改 SDK，只是验证：Stagehand 能不能启动本地浏览器、能不能调用 DeepSeek、能不能完成 `observe/act/extract`。
+
+### 2.5 怎么运行这个文件？
+
+在仓库根目录运行：
+
+```bash
+DEEPSEEK_API_KEY="你的 DeepSeek API key" pnpm run example -- deepseek-local
+```
+
+或者你已经 export 过 key：
+
+```bash
+pnpm run example -- deepseek-local
+```
+
+如果你想直接在 core 包里跑：
+
+```bash
+cd packages/core
+DEEPSEEK_API_KEY="你的 DeepSeek API key" pnpm run example -- deepseek-local
+```
+
+### 2.6 运行成功应该看到什么？
+
+你应该看到三类输出：
+
+1. Stagehand 启动本地浏览器；
+2. `observe result` 打印出模型认为可操作的元素；
+3. `extract result` 打印出类似：
+
+```json
+{
+  "title": "Example Domain",
+  "summary": "This page is for use in illustrative examples in documents."
+}
+```
+
+如果这一步跑通，说明第一阶段的最小链路通了：
+
+```text
+Stagehand SDK -> 本地 Chrome -> DeepSeek API -> DOM 型自动化
+```
 
 ## 3. 第一阶段：接 DeepSeek V4 Pro，不用 screenshot
 
-### 3.1 推荐写法：AI SDK provider 路径
+### 3.1 为什么推荐先用 `CustomOpenAIClient`？
 
-如果 DeepSeek provider 在当前依赖中可用，可以这样写：
+第一阶段你的要求是不使用 screenshot，只跑普通 `act/observe/extract`。在这个前提下，`CustomOpenAIClient` 最直接：
+
+- DeepSeek API 兼容 OpenAI 风格接口；
+- 你可以明确写 `baseURL: "https://api.deepseek.com"`；
+- 不需要先确认 AI SDK 的 DeepSeek provider 包装是否符合当前模型名；
+- 不涉及 `extract({ screenshot: true })` 的限制。
+
+所以第一阶段我建议先用上面的 `packages/core/examples/deepseek-local.ts`。
+
+### 3.2 AI SDK provider 写法什么时候用？
+
+如果你确认当前依赖里的 DeepSeek provider 可用，也可以改成：
 
 ```ts
-import { Stagehand } from "@browserbasehq/stagehand";
-import { z } from "zod";
-
 const stagehand = new Stagehand({
   env: "LOCAL",
   model: {
@@ -91,34 +255,21 @@ const stagehand = new Stagehand({
   },
   verbose: 1,
 });
-
-await stagehand.init();
-
-const page = stagehand.context.pages()[0];
-await page.goto("https://example.com");
-
-await stagehand.act("点击 More information 链接");
-
-const data = await stagehand.extract(
-  "提取页面标题和主要说明",
-  z.object({
-    title: z.string(),
-    summary: z.string(),
-  }),
-);
-
-console.log(data);
-await stagehand.close();
 ```
 
-### 3.2 备选写法：OpenAI-compatible 自定义 client
+但第一阶段不是为了测试 provider 包装，而是为了测试 Stagehand 工作流。所以先用 `CustomOpenAIClient` 更少绕路。
 
-DeepSeek API 兼容 OpenAI/Anthropic 格式。如果 AI SDK provider 路径不合适，可以用 OpenAI SDK 包一层：
+### 3.3 怎么嵌入你自己的项目？
+
+等 `deepseek-local.ts` 跑通后，再嵌入你的项目。不要一开始就嵌入业务系统。
+
+嵌入方式有两种：
+
+#### 方式 A：你的项目是 TypeScript/Node
+
+安装 Stagehand 包，直接把示例里的初始化代码复制到你的项目里。核心就是：
 
 ```ts
-import { CustomOpenAIClient, Stagehand } from "@browserbasehq/stagehand";
-import OpenAI from "openai";
-
 const stagehand = new Stagehand({
   env: "LOCAL",
   llmClient: new CustomOpenAIClient({
@@ -131,17 +282,33 @@ const stagehand = new Stagehand({
 });
 ```
 
-这条路适合“不使用 screenshot”的第一阶段。
-
-**不要这样写：**
+然后在你的业务函数里：
 
 ```ts
-await stagehand.extract("分析截图", schema, { screenshot: true });
+await stagehand.init();
+const page = stagehand.context.pages()[0];
+await page.goto("你的业务页面");
+await stagehand.act("你的操作指令");
+await stagehand.close();
 ```
 
-因为 `CustomOpenAIClient` 不是 AI SDK client，当前截图提取路径会报参数错误。
+#### 方式 B：你的项目不是 Node/TS
 
-### 3.3 第一阶段重点测什么？
+先不要硬嵌 SDK。后面再用 `packages/server-v3` 把 Stagehand 包成本地 HTTP 服务，让 Python/Java/Go 通过 REST 调用。
+
+### 3.4 第一阶段不要做什么？
+
+先不要做这些：
+
+- 不要开 `screenshot: true`；
+- 不要上 CUA；
+- 不要改 `packages/core/lib` 源码；
+- 不要一开始就接 Ascend/Qwen；
+- 不要直接嵌进复杂业务系统。
+
+先跑通最小闭环，再逐步替换页面、指令、模型。
+
+### 3.5 第一阶段重点测什么？
 
 不要只看 demo 能不能跑，要记录这些：
 
