@@ -78,6 +78,37 @@ await stagehand.act("点击登录按钮");
 
 **重点：普通 `act()` 主要靠 DOM/a11y 结构，不是靠截图。**这正好符合你第一阶段“不使用 screenshot”的需求。
 
+### DOM 是什么意思？模型到底看见什么？
+
+DOM 可以先理解成：**浏览器把网页解析出来的一棵“页面元素树”。**
+
+比如网页上你看到的是：
+
+```html
+<button>登录</button>
+<input placeholder="手机号" />
+<a href="/products/1">iPhone 价格</a>
+```
+
+但 Stagehand 通常不会把完整 HTML 原样塞给模型。完整 HTML 太吵：有样式、脚本、无关 div、埋点、隐藏节点。Stagehand 会抓一个更干净的页面快照，核心是 accessibility tree / a11y tree，也就是浏览器给读屏器、辅助功能用的语义树。模型看到的更像这种文本：
+
+```text
+[12-345] button: 登录
+[13-346] textbox: 手机号
+[14-347] link: iPhone 价格
+```
+
+这里每一行大概包含：
+
+- `12-345`：Stagehand 给元素的临时 ID，模型可以用它指向元素；
+- `button/link/textbox`：元素角色，说明它是按钮、链接还是输入框；
+- `登录`、`手机号`、`iPhone 价格`：用户能看到或辅助功能能读到的名字；
+- 缩进：表示父子层级，比如表单里有什么按钮。
+
+所以模型不是在“看 Playwright DOM 对象”，也不是默认看截图。它主要看一个压缩后的语义页面树，然后回答：要操作哪个 ID、做什么动作。Stagehand 再用内部的 ID → XPath 映射，把模型选中的元素转回浏览器能执行的定位方式。
+
+这也是为什么普通 `act/observe/extract` 比 CUA 更适合第一阶段：它传的是结构化文本，不是图片，成本更低，也更容易复现。
+
 ### `extract()`：从页面拿结构化数据
 
 ```ts

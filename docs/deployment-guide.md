@@ -57,36 +57,32 @@ Stagehand ──HTTP──> 你的 Qwen OpenAI-compatible 服务 ──> Ascend 
 
 如果你还没有源码：
 
-```bash
+```powershell
 git clone https://github.com/browserbase/stagehand.git
 cd stagehand
 ```
 
-如果你已经有源码：
+如果你已经有源码，在 Windows PowerShell 里进入你的本地目录再 pull。示例：
 
-```bash
-cd /workspace/stagehand
+```powershell
+cd C:\code\stagehand
 git pull
 ```
 
-如果你是在当前这个容器里继续操作，仓库路径就是：
-
-```bash
-cd /workspace/stagehand
-```
+如果你的目录不是 `C:\code\stagehand`，换成你自己的实际路径。后面所有命令默认都在这个仓库根目录执行。
 
 ### 2.2 准备 Node 和 pnpm
 
 根目录 `package.json` 要求 Node 20.19+ 或 22.12+。先确认版本：
 
-```bash
+```powershell
 node -v
 pnpm -v
 ```
 
 安装依赖并构建：
 
-```bash
+```powershell
 pnpm install
 pnpm run build
 ```
@@ -97,14 +93,14 @@ pnpm run build
 
 推荐先直接用环境变量，不要把 key 写进代码：
 
-```bash
-export DEEPSEEK_API_KEY="你的 DeepSeek API key"
+```powershell
+$env:DEEPSEEK_API_KEY = "你的 DeepSeek API key"
 ```
 
 如果你想长期保存，可以复制 `.env.example`：
 
-```bash
-cp .env.example .env
+```powershell
+Copy-Item .env.example .env
 ```
 
 然后在 `.env` 里加：
@@ -113,7 +109,7 @@ cp .env.example .env
 DEEPSEEK_API_KEY=你的 DeepSeek API key
 ```
 
-但注意：下面的示例脚本如果直接用 `process.env.DEEPSEEK_API_KEY`，你需要确保运行前环境变量真的加载了。最简单的办法还是先用 `export`。
+但注意：下面的示例脚本直接读 `process.env.DEEPSEEK_API_KEY`。在 Windows PowerShell 当前窗口里，最简单的办法就是先执行上面的 `$env:DEEPSEEK_API_KEY = "..."`，然后在同一个窗口继续运行示例。
 
 ### 2.4 你要写什么文件？
 
@@ -127,10 +123,15 @@ packages/core/examples/deepseek-local.ts
 
 为什么放这里？因为 `packages/core/package.json` 已经有 example runner，可以直接跑 `packages/core/examples/*.ts`。根目录的 `pnpm run example -- <name>` 也会转到 core package 的 examples。
 
-创建文件：
+创建文件。Windows 下最稳的方式是直接用 VS Code：
 
-```bash
-cat > packages/core/examples/deepseek-local.ts <<'EOF'
+```powershell
+code packages/core/examples/deepseek-local.ts
+```
+
+然后把下面内容粘进去保存：
+
+```ts
 import { CustomOpenAIClient, Stagehand } from "../lib/v3/index.js";
 import OpenAI from "openai";
 import { z } from "zod";
@@ -182,7 +183,6 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-EOF
 ```
 
 这个文件就是你的第一阶段入口。它没有嵌入业务系统，也没有改 SDK，只是验证：Stagehand 能不能启动本地浏览器、能不能调用 DeepSeek、能不能完成 `observe/act/extract`。
@@ -191,21 +191,23 @@ EOF
 
 在仓库根目录运行：
 
-```bash
-DEEPSEEK_API_KEY="你的 DeepSeek API key" pnpm run example -- deepseek-local
+```powershell
+$env:DEEPSEEK_API_KEY = "你的 DeepSeek API key"
+pnpm run example -- deepseek-local
 ```
 
-或者你已经 export 过 key：
+如果你已经在当前 PowerShell 窗口设置过 `$env:DEEPSEEK_API_KEY`，后面只需要：
 
-```bash
+```powershell
 pnpm run example -- deepseek-local
 ```
 
 如果你想直接在 core 包里跑：
 
-```bash
+```powershell
 cd packages/core
-DEEPSEEK_API_KEY="你的 DeepSeek API key" pnpm run example -- deepseek-local
+$env:DEEPSEEK_API_KEY = "你的 DeepSeek API key"
+pnpm run example -- deepseek-local
 ```
 
 ### 2.6 运行成功应该看到什么？
@@ -325,12 +327,14 @@ await stagehand.close();
 
 如果你想把 Stagehand 做成一个本地服务，而不是每个业务都写 TS SDK，可以启动 `server-v3`。
 
-```bash
-cd /workspace/stagehand/packages/server-v3
+```powershell
+cd C:\code\stagehand\packages\server-v3
 pnpm install
-cp .env.example .env
+Copy-Item .env.example .env
 pnpm dev
 ```
+
+上面的 `C:\code\stagehand` 仍然只是示例路径，换成你的 Windows 本地仓库路径。
 
 它的意义是：你通过 HTTP 创建浏览器 session、调用 act/extract/observe。
 
