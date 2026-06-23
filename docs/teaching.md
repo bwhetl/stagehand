@@ -149,11 +149,12 @@ model: {
 
 不是一个入口。前者是你自己给 Stagehand 一个 client；后者是让 Stagehand 通过 AI SDK provider 去创建 client。
 
-**关键判断：**
+**确定回答：**
 
-- 第一阶段你不用截图，DeepSeek 走 `CustomOpenAIClient` 或 AI SDK provider 都可以；
-- 如果后面要 `extract({ screenshot: true })`，不要用 `CustomOpenAIClient`，因为当前代码会拒绝非 AI SDK client 的截图提取；
-- 如果后面要 CUA，重点不是普通 LLM client，而是 CUA client 是否支持你的模型、截图格式、工具调用协议。
+- 第一阶段你不用截图，DeepSeek 走 `CustomOpenAIClient` 或 AI SDK provider 都可以。
+- `CustomOpenAIClient` 只解决普通 LLM 调用，不是 CUA 接入口。
+- 你要搭本地 CUA，当前最现实的路线是：把本地 Qwen 服务做成 **Microsoft/FARA 兼容的 OpenAI Chat Completions 服务**，然后在 `agent({ mode: "cua" })` 里显式写 `provider: "microsoft"`。
+- 这不是让你自己猜协议；Stagehand 代码里已经有 `MicrosoftCUAClient`，它会把截图作为 `image_url` 发给模型，并要求模型返回 `<tool_call>{...}</tool_call>` 这种 XML 包起来的动作 JSON。你要做的是让 Qwen 服务按这个格式回答。
 
 ## 7. 本地 Qwen 3.5 397B 能不能分析 screenshot？
 
@@ -169,11 +170,30 @@ model: {
 
 所以判断很简单：
 
-- **做 DOM 型自动化**：Qwen 只要文本/结构化输出够稳就能试；
-- **做 screenshot 提取**：需要 AI SDK client 路径支持你的本地服务图片输入；
-- **做本地 CUA**：还要适配 CUA 工具协议，不是把模型部署起来就自动可用。
+- **做 DOM 型自动化**：Qwen 只要文本/结构化输出够稳就能试。
+- **做 screenshot 提取**：需要走 AI SDK client 路径，或者你改 Stagehand 的截图提取限制。
+- **做本地 CUA**：按当前代码，不要走 `CustomOpenAIClient`。用 `mode: "cua"` + `provider: "microsoft"` + OpenAI-compatible 本地 Qwen endpoint。
 
-**我的建议：先别急着把 Qwen 3.5 397B 直接接 CUA。先用同一个本地模型服务跑普通 `act/observe/extract`，确认 JSON、工具调用、长上下文、延迟都稳定，再做 CUA 适配。**
+最小写法长这样：
+
+```ts
+const agent = stagehand.agent({
+  mode: "cua",
+  model: {
+    modelName: "qwen3.5-397b",
+    apiKey: process.env.QWEN_LOCAL_API_KEY ?? "local",
+    baseURL: "http://你的-qwen-服务:8000/v1",
+    provider: "microsoft",
+  },
+});
+
+await agent.execute({
+  instruction: "打开页面，找到第一个商品价格",
+  maxSteps: 10,
+});
+```
+
+这里的 `provider: "microsoft"` 是关键。它会强制 Stagehand 走 `MicrosoftCUAClient`，不要求模型名必须是 `microsoft/fara-7b`。但你的 Qwen 服务必须能处理截图输入，并按 FARA 的 XML tool-call 格式返回动作。
 
 ## 8. “非 AI SDK client 会报参数错误”是什么意思？
 

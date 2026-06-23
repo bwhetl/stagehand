@@ -238,17 +238,114 @@ POST /v1/chat/completions
 6. 单独测图片输入；
 7. 最后才接 CUA。
 
-## 6. CUA 本地化注意事项
+## 6. 本地 CUA 的确定方案
 
-CUA 不是“换一个模型名”那么简单。它需要模型像一个操作员一样工作：看截图、决定动作、执行后再看截图。
+你问的是“到底怎么搭本地 CUA”。确定回答如下：
 
-你要检查：
+**当前不建议用 `CustomOpenAIClient` 搭 CUA。当前最可落地的本地 CUA 路线，是把 Qwen 3.5 397B 服务伪装成 FARA/Microsoft CUA 兼容接口，然后让 Stagehand 走 `MicrosoftCUAClient`。**
 
-- Stagehand 当前 CUA client 支持哪些 provider；
-- 你的 Qwen API 是否能模拟这些 provider 的返回格式；
-- 点击、输入、滚动、截图请求的工具调用格式是否一致；
-- 模型是否会输出可执行坐标/动作；
-- 每一步截图的隐私风险和成本。
+原因：Stagehand 现有 CUA 路径只内置了 OpenAI、Anthropic、Google、Microsoft 四类 CUA client。其中 Microsoft 这条路最适合本地模型，因为它本来就是 OpenAI-compatible Chat Completions 调用，而且动作协议是 prompt 里的 XML tool call，不强依赖某个云厂商的专用 Responses API。
+
+### 6.1 你要实现的接口
+
+你的 Qwen 服务需要提供：
+
+```text
+POST http://你的-qwen-服务:8000/v1/chat/completions
+```
+
+请求里会有：
+
+- `model`：你配置的模型名，比如 `qwen3.5-397b`；
+- `messages`：包含 system prompt、用户指令、截图 `image_url`；
+- `temperature`：通常为 0。
+
+返回要兼容 OpenAI Chat Completions：
+
+```json
+{
+  "choices": [
+    {
+      "message": {
+        "content": "思考内容\n<tool_call>\n{\"name\":\"computer_use\",\"arguments\":{\"action\":\"left_click\",\"coordinate\":[420,300]}}\n</tool_call>"
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1000,
+    "completion_tokens": 100,
+    "total_tokens": 1100
+  }
+}
+```
+
+Stagehand 会解析 `<tool_call>...</tool_call>` 里的 JSON，然后把这些动作转成浏览器操作。
+
+### 6.2 Stagehand 侧配置
+
+```ts
+const stagehand = new Stagehand({
+  env: "LOCAL",
+  verbose: 2,
+  localBrowserLaunchOptions: {
+    viewport: { width: 1288, height: 711 },
+    deviceScaleFactor: 1,
+  },
+});
+
+await stagehand.init();
+
+const agent = stagehand.agent({
+  mode: "cua",
+  model: {
+    modelName: "qwen3.5-397b",
+    apiKey: process.env.QWEN_LOCAL_API_KEY ?? "local",
+    baseURL: "http://你的-qwen-服务:8000/v1",
+    provider: "microsoft",
+    maxImages: 3,
+    temperature: 0,
+  },
+});
+
+await agent.execute({
+  instruction: "打开当前页面，找到第一个商品的价格",
+  maxSteps: 10,
+});
+```
+
+这里必须有 `provider: "microsoft"`。否则 Stagehand 会根据模型名判断是否是内置 CUA 模型；`qwen3.5-397b` 不在内置 CUA 模型列表里，会被拒绝。
+
+### 6.3 Qwen 要会输出哪些动作？
+
+至少要稳定输出这些 action：
+
+- `left_click`：点击坐标；
+- `type`：输入文本；
+- `key`：按键，比如 Enter、Escape；
+- `scroll`：滚动；
+- `visit_url`：打开 URL；
+- `wait`：等待；
+- `terminate`：任务结束。
+
+坐标来自截图，格式类似：
+
+```xml
+<tool_call>
+{"name":"computer_use","arguments":{"action":"left_click","coordinate":[420,300]}}
+</tool_call>
+```
+
+### 6.4 如果这条路跑不通怎么办？
+
+有两个备选：
+
+1. **短期备选：不用 CUA，用 hybrid/DOM agent。**
+   这仍然可以用你的本地 Qwen，但主要靠 DOM 工具和部分视觉工具，不要求模型完全按 CUA 协议操作屏幕。
+
+2. **长期备选：新增一个 `QwenCUAClient`。**
+   如果你的 Qwen 服务有自己的工具调用格式，而不适合伪装成 FARA/Microsoft，就在 `packages/core/lib/v3/agent/` 里新增 client，并在 `AgentProvider` 里注册 `qwen` provider。这是改代码方案，工作量更大，但最干净。
+
+### 6.5 验证任务
 
 建议先做 5 个固定任务：
 
